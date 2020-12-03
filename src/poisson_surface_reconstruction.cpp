@@ -1,7 +1,8 @@
 #include "poisson_surface_reconstruction.h"
 #include <igl/copyleft/marching_cubes.h>
 #include <algorithm>
-
+#include "fd_interpolate.h"
+#include "fd_grad.h"
 void poisson_surface_reconstruction(
     const Eigen::MatrixXd & P,
     const Eigen::MatrixXd & N,
@@ -47,7 +48,38 @@ void poisson_surface_reconstruction(
   ////////////////////////////////////////////////////////////////////////////
   // Add your code here
   ////////////////////////////////////////////////////////////////////////////
+  
+  Eigen::SparseMatrix<double> Wx,Wy,Wz;
+  fd_interpolate(nx-1, ny, nz, h, corner, P, Wx);
+  fd_interpolate(nx, ny-1, nz, h, corner, P, Wy);
+  fd_interpolate(nx, ny, nz-1, h, corner, P, Wz);
+  
 
+  Eigen::VectorXd vx = Wx.transpose() * N.col(0);
+  Eigen::VectorXd vy = Wy.transpose() * N.col(1);
+  Eigen::VectorXd vz = Wz.transpose() * N.col(2);
+  Eigen::VectorXd v(vx.size() + vy.size() + vz.size());
+  // Vertical Stacking of vx, vy, vz to obtain column vector
+  v << vx,
+       vy,
+       vz;
+
+  Eigen::SparseMatrix<double> G;
+  fd_grad(nx, ny, nz, h, G);
+
+  // Solving for g by using G and v
+  // example from https://eigen.tuxfamily.org/dox/classEigen_1_1BiCGSTAB.html
+  Eigen::BiCGSTAB<Eigen::SparseMatrix<double> > solver;
+  solver.compute(G.transpose() * G);
+  g = solver.solve(G.transpose() * v);
+
+  
+  Eigen::SparseMatrix<double> W;
+  fd_interpolate(nx, ny, nz, h, corner, P, W);
+  
+  // Finding sigma to "pre-shift" g
+  double sigma = (1/n) * (W*g).sum();
+  g = (g.array()-sigma).matrix();
   ////////////////////////////////////////////////////////////////////////////
   // Run black box algorithm to compute mesh from implicit function: this
   // function always extracts g=0, so "pre-shift" your g values by -sigma
